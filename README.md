@@ -47,6 +47,9 @@ shuru run --allow-net --allow-host api.openai.com --allow-host registry.npmjs.or
 # Use a specific DNS resolver
 shuru run --allow-net --dns-resolver 1.1.1.1 -- curl https://example.com
 
+# Trust macOS system CAs for proxy upstream TLS when secrets trigger MITM
+shuru run --allow-net --ca-bundle system --secret API_KEY=OPENAI_API_KEY@api.openai.com -- curl https://api.openai.com/v1/models
+
 # Custom resources
 shuru run --cpus 4 --memory 4096 --disk-size 8192 -- make -j4
 ```
@@ -150,7 +153,8 @@ Shuru loads `shuru.json` from the current directory (or `--config PATH`). All fi
   },
   "network": {
     "allow": ["api.openai.com", "registry.npmjs.org"]
-  }
+  },
+  "ca_bundle": "system"
 }
 ```
 

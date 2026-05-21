@@ -15,6 +15,8 @@ pub(crate) struct ShuruConfig {
     pub command: Option<Vec<String>>,
     pub secrets: Option<HashMap<String, SecretEntry>>,
     pub network: Option<NetworkEntry>,
+    /// Additional CA bundle for proxy upstream TLS ("system" on macOS, or a PEM path).
+    pub ca_bundle: Option<String>,
     /// Host ports to expose to the guest (e.g. "3000:8080" or "5432").
     pub expose_host: Option<Vec<String>>,
 }
@@ -59,6 +61,8 @@ impl ShuruConfig {
                 proxy.network.allow = allow.clone();
             }
         }
+
+        proxy.ca_bundle = self.ca_bundle.clone();
 
         if let Some(ref expose) = self.expose_host {
             for s in expose {

@@ -6,11 +6,7 @@ use anyhow::{bail, Context, Result};
 
 #[cfg(target_os = "macos")]
 extern "C" {
-    fn clonefile(
-        src: *const libc::c_char,
-        dst: *const libc::c_char,
-        flags: u32,
-    ) -> libc::c_int;
+    fn clonefile(src: *const libc::c_char, dst: *const libc::c_char, flags: u32) -> libc::c_int;
 }
 
 #[cfg(target_os = "macos")]
@@ -27,8 +23,7 @@ pub(crate) fn clone_file(src: &str, dst: &str) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn clone_file(src: &str, dst: &str) -> Result<()> {
-    std::fs::copy(src, dst)
-        .with_context(|| format!("failed to copy {} -> {}", src, dst))?;
+    std::fs::copy(src, dst).with_context(|| format!("failed to copy {} -> {}", src, dst))?;
     Ok(())
 }
 
@@ -73,11 +68,7 @@ pub(crate) struct PreparedVm {
     pub mounts: Vec<MountConfig>,
 }
 
-pub(crate) fn prepare_vm(
-    vm: &VmArgs,
-    cfg: &ShuruConfig,
-    from: Option<&str>,
-) -> Result<PreparedVm> {
+pub(crate) fn prepare_vm(vm: &VmArgs, cfg: &ShuruConfig, from: Option<&str>) -> Result<PreparedVm> {
     trace_boot("prepare_vm start");
     let cpus = vm.cpus.or(cfg.cpus).unwrap_or(2);
     let memory = vm.memory.or(cfg.memory).unwrap_or(2048);
@@ -95,17 +86,26 @@ pub(crate) fn prepare_vm(
 
         // Merge --secret flags: NAME=ENV_VAR@host1,host2
         for s in &vm.secret {
-            let (name, from, hosts) = parse_secret_flag(s)
-                .with_context(|| format!("invalid --secret: '{}' (expected NAME=ENV@host1,host2)", s))?;
+            let (name, from, hosts) = parse_secret_flag(s).with_context(|| {
+                format!("invalid --secret: '{}' (expected NAME=ENV@host1,host2)", s)
+            })?;
             proxy.secrets.insert(
                 name,
-                shuru_proxy::config::SecretConfig { from, hosts, value: None },
+                shuru_proxy::config::SecretConfig {
+                    from,
+                    hosts,
+                    value: None,
+                },
             );
         }
 
         // Merge --allow-domain flags
         for d in &vm.allow_host {
             proxy.network.allow.push(d.clone());
+        }
+
+        if let Some(ref ca_bundle) = vm.ca_bundle {
+            proxy.ca_bundle = Some(ca_bundle.clone());
         }
 
         // Merge --expose-host flags
@@ -129,8 +129,8 @@ pub(crate) fn prepare_vm(
     }
     let mut forwards = Vec::new();
     for s in &port_strs {
-        let mapping = parse_port_mapping(s)
-            .with_context(|| format!("invalid port mapping: '{}'", s))?;
+        let mapping =
+            parse_port_mapping(s).with_context(|| format!("invalid port mapping: '{}'", s))?;
         forwards.push(mapping);
     }
 
@@ -143,8 +143,7 @@ pub(crate) fn prepare_vm(
     }
     let mut mounts = Vec::new();
     for s in &mount_strs {
-        let mc = parse_mount_spec(s)
-            .with_context(|| format!("invalid mount spec: '{}'", s))?;
+        let mc = parse_mount_spec(s).with_context(|| format!("invalid mount spec: '{}'", s))?;
         mounts.push(mc);
     }
 
@@ -188,8 +187,7 @@ pub(crate) fn prepare_vm(
     let mut cas_index: Option<String> = None;
     let source = match from {
         Some(name) => {
-            shuru_vm::validate_checkpoint_name(name)
-                .map_err(|e| anyhow::anyhow!(e))?;
+            shuru_vm::validate_checkpoint_name(name).map_err(|e| anyhow::anyhow!(e))?;
             // Check .idx (CAS) first, then .ext4 (legacy)
             let idx_path = format!("{}/{}.idx", checkpoints_dir, name);
             let ext4_path = format!("{}/{}.ext4", checkpoints_dir, name);
@@ -236,9 +234,7 @@ pub(crate) fn prepare_vm(
     trace_boot("prepare: rootfs cloned");
 
     // Extend to requested disk size
-    let f = std::fs::OpenOptions::new()
-        .write(true)
-        .open(&work_rootfs)?;
+    let f = std::fs::OpenOptions::new().write(true).open(&work_rootfs)?;
     let target = disk_size * 1024 * 1024;
     let current = f.metadata()?.len();
     if target < current {
@@ -424,7 +420,12 @@ pub(crate) fn run_command(prepared: &PreparedVm, command: &[String]) -> Result<R
     let exit_code = if std::io::stdin().is_terminal() {
         sandbox.shell(command, &env)?
     } else {
-        sandbox.exec_with_env(command, &env, &mut std::io::stdout(), &mut std::io::stderr())?
+        sandbox.exec_with_env(
+            command,
+            &env,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        )?
     };
     trace_boot("command done");
 
@@ -434,7 +435,10 @@ pub(crate) fn run_command(prepared: &PreparedVm, command: &[String]) -> Result<R
 
     drop(proxy_handle);
     let _ = sandbox.stop();
-    Ok(RunResult { exit_code, nbd_handle })
+    Ok(RunResult {
+        exit_code,
+        nbd_handle,
+    })
 }
 
 /// Pure string validation — no filesystem access. Separated from `parse_mount_spec`
@@ -474,7 +478,8 @@ fn parse_mount_spec(s: &str) -> Result<MountConfig> {
 
 fn validate_mounts(mounts: &[MountConfig], allow_host_writes: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("failed to determine current working directory")?;
-    let cwd = std::fs::canonicalize(&cwd).context("failed to canonicalize current working directory")?;
+    let cwd =
+        std::fs::canonicalize(&cwd).context("failed to canonicalize current working directory")?;
     validate_mounts_with_cwd(mounts, allow_host_writes, &cwd)
 }
 
@@ -627,7 +632,9 @@ mod tests {
             read_only: true,
         }];
         let err = validate_mounts_with_cwd(&mounts, false, cwd).unwrap_err();
-        assert!(err.to_string().contains("outside the current working directory"));
+        assert!(err
+            .to_string()
+            .contains("outside the current working directory"));
     }
 
     #[test]

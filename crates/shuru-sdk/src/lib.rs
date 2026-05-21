@@ -87,6 +87,8 @@ pub struct SandboxConfig {
     pub secrets: HashMap<String, SecretConfig>,
     /// Allowed domain patterns for network access.
     pub allowed_hosts: Vec<String>,
+    /// CA bundle for proxy upstream TLS ("system" on macOS, or a PEM path).
+    pub ca_bundle: Option<String>,
     /// Port forwards (host → guest).
     pub ports: Vec<shuru_proto::PortMapping>,
     /// Host ports exposed to the guest via host.shuru.internal.
@@ -111,6 +113,7 @@ impl Default for SandboxConfig {
             allow_net: false,
             secrets: HashMap::new(),
             allowed_hosts: vec![],
+            ca_bundle: None,
             ports: vec![],
             expose_host: vec![],
             from: None,
@@ -872,6 +875,7 @@ fn boot_vm(config: SandboxConfig) -> Result<BootedVm> {
         proxy_config.secrets = config.secrets;
         proxy_config.network.allow = config.allowed_hosts;
         proxy_config.expose_host = config.expose_host;
+        proxy_config.ca_bundle = config.ca_bundle;
 
         let (vm_fd, host_fd) = shuru_proxy::create_socketpair()?;
         let handle = shuru_proxy::start(host_fd, proxy_config)?;

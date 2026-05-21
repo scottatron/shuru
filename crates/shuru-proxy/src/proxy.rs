@@ -1,7 +1,13 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+#[cfg(target_os = "macos")]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::sync::Arc;
 
+use anyhow::Context;
 use boring::ssl::{SslConnector, SslMethod};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -42,13 +48,8 @@ impl ProxyEngine {
         ca: CertificateAuthority,
         placeholders: HashMap<String, String>,
         allowed_ips: AllowedIps,
+        upstream_ssl: SslConnector,
     ) -> Self {
-        // BoringSSL upstream connector — Chrome's TLS stack so Cloudflare
-        // doesn't reject our MITM connections based on JA3/JA4 fingerprint.
-        let mut builder = SslConnector::builder(SslMethod::tls()).expect("SslConnector");
-        builder.set_alpn_protos(b"\x08http/1.1").expect("ALPN");
-        let upstream_ssl = builder.build();
-
         ProxyEngine {
             config: Arc::new(config),
             event_rx,
@@ -120,6 +121,99 @@ impl ProxyEngine {
             }
         });
     }
+}
+
+/// Build the BoringSSL upstream connector.
+///
+/// This is only used when Shuru MITMs a TLS connection for secret injection;
+/// blind-tunneled TLS remains end-to-end between the guest process and the
+/// remote server.
+pub(crate) fn build_upstream_ssl_connector(config: &ProxyConfig) -> anyhow::Result<SslConnector> {
+    // BoringSSL upstream connector — Chrome's TLS stack so Cloudflare
+    // doesn't reject our MITM connections based on JA3/JA4 fingerprint.
+    let mut builder = SslConnector::builder(SslMethod::tls()).context("SslConnector")?;
+    builder
+        .set_alpn_protos(b"\x08http/1.1")
+        .context("set ALPN")?;
+
+    if let Some(bundle) = config
+        .ca_bundle
+        .clone()
+        .or_else(|| std::env::var("SHURU_CA_BUNDLE").ok())
+    {
+        let bundle_path = resolve_ca_bundle_path(&bundle)?;
+        builder
+            .set_ca_file(&bundle_path)
+            .with_context(|| format!("load CA bundle {}", bundle_path.display()))?;
+    }
+
+    Ok(builder.build())
+}
+
+pub fn resolve_ca_bundle_path(value: &str) -> anyhow::Result<PathBuf> {
+    if value == "system" {
+        export_macos_system_ca_bundle()
+    } else {
+        Ok(PathBuf::from(value))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn export_macos_system_ca_bundle() -> anyhow::Result<PathBuf> {
+    let mut pem = Vec::new();
+    for keychain in macos_ca_keychains() {
+        if !keychain.exists() {
+            continue;
+        }
+        let output = Command::new("/usr/bin/security")
+            .args(["find-certificate", "-a", "-p"])
+            .arg(&keychain)
+            .output()
+            .with_context(|| format!("export certificates from {}", keychain.display()))?;
+        if !output.status.success() {
+            debug!(
+                "failed to export certificates from {}: {}",
+                keychain.display(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            continue;
+        }
+        pem.extend_from_slice(&output.stdout);
+    }
+
+    if pem.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no certificates exported from macOS keychains"
+        ));
+    }
+
+    let path = std::env::temp_dir().join(format!("shuru-system-ca-{}.pem", std::process::id()));
+    std::fs::write(&path, pem).with_context(|| format!("write {}", path.display()))?;
+    Ok(path)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_ca_keychains() -> Vec<PathBuf> {
+    let mut keychains = vec![
+        Path::new("/System/Library/Keychains/SystemRootCertificates.keychain").to_path_buf(),
+        Path::new("/Library/Keychains/System.keychain").to_path_buf(),
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        keychains.push(
+            Path::new(&home)
+                .join("Library")
+                .join("Keychains")
+                .join("login.keychain-db"),
+        );
+    }
+    keychains
+}
+
+#[cfg(not(target_os = "macos"))]
+fn export_macos_system_ca_bundle() -> anyhow::Result<PathBuf> {
+    Err(anyhow::anyhow!(
+        "SHURU_CA_BUNDLE=system is currently only supported on macOS"
+    ))
 }
 
 /// Handle a single proxied TCP connection.

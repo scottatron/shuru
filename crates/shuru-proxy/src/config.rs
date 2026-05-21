@@ -23,6 +23,11 @@ pub struct ProxyConfig {
     pub network: NetworkConfig,
     /// Host ports exposed to the guest via host.shuru.internal.
     pub expose_host: Vec<ExposeHostMapping>,
+    /// Additional CA bundle for upstream TLS validation.
+    ///
+    /// If unset, `SHURU_CA_BUNDLE` is also consulted. On macOS, the special
+    /// value `system` exports the system roots with the `security` tool.
+    pub ca_bundle: Option<String>,
 }
 
 impl Default for ProxyConfig {

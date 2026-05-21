@@ -56,6 +56,14 @@ pub(crate) struct VmArgs {
     #[arg(long = "allow-host", value_name = "PATTERN")]
     pub allow_host: Vec<String>,
 
+    /// CA bundle for proxy upstream TLS ("system" on macOS, or a PEM path)
+    #[arg(
+        long = "ca-bundle",
+        env = "SHURU_CA_BUNDLE",
+        value_name = "PATH|system"
+    )]
+    pub ca_bundle: Option<String>,
+
     /// Expose a host port to the guest via host.shuru.internal (HOST:GUEST or PORT)
     #[arg(long = "expose-host", value_name = "HOST:GUEST", hide = true)]
     pub expose_host: Vec<String>,

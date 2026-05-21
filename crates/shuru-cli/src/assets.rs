@@ -6,6 +6,7 @@ use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
 use serde::Deserialize;
 use tar::Archive;
+use ureq::tls::{Certificate, PemItem, RootCerts, TlsConfig};
 
 const GITHUB_REPO: &str = "superhq-ai/shuru";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -52,7 +53,9 @@ fn download_os_image_version(data_dir: &str, version: &str) -> Result<()> {
     eprintln!("shuru: downloading OS image ({})...", tag);
     eprintln!("shuru: {}", url);
 
-    let response = ureq::get(&url)
+    let agent = http_agent()?;
+    let response = agent
+        .get(&url)
         .call()
         .with_context(|| format!("download failed — is version {} released?", tag))?;
 
@@ -110,7 +113,9 @@ pub fn upgrade(data_dir: &str) -> Result<()> {
         GITHUB_REPO
     );
 
-    let response = ureq::get(&api_url)
+    let agent = http_agent()?;
+    let response = agent
+        .get(&api_url)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "shuru")
         .call()
@@ -145,7 +150,8 @@ pub fn upgrade(data_dir: &str) -> Result<()> {
     eprintln!("shuru: downloading CLI ({})...", latest);
     eprintln!("shuru: {}", cli_url);
 
-    let response = ureq::get(&cli_url)
+    let response = agent
+        .get(&cli_url)
         .call()
         .with_context(|| format!("failed to download CLI v{}", latest))?;
 
@@ -202,6 +208,42 @@ pub fn upgrade(data_dir: &str) -> Result<()> {
 
     eprintln!("shuru: upgrade complete ({})", latest);
     Ok(())
+}
+
+fn http_agent() -> Result<ureq::Agent> {
+    let Some(bundle) = std::env::var("SHURU_CA_BUNDLE").ok() else {
+        return Ok(ureq::Agent::new_with_defaults());
+    };
+
+    let bundle_path = shuru_proxy::resolve_ca_bundle_path(&bundle)?;
+    let pem = fs::read(&bundle_path)
+        .with_context(|| format!("failed to read CA bundle {}", bundle_path.display()))?;
+    let certs = parse_ca_bundle(&pem)?;
+    let tls = TlsConfig::builder()
+        .root_certs(RootCerts::new_with_certs(&certs))
+        .build();
+
+    Ok(ureq::Agent::config_builder()
+        .tls_config(tls)
+        .build()
+        .new_agent())
+}
+
+fn parse_ca_bundle(pem: &[u8]) -> Result<Vec<Certificate<'static>>> {
+    let mut certs = Vec::new();
+    for item in ureq::tls::parse_pem(pem) {
+        match item.context("failed to parse CA bundle")? {
+            PemItem::Certificate(cert) => certs.push(cert),
+            PemItem::PrivateKey(_) => {}
+            _ => {}
+        }
+    }
+
+    if certs.is_empty() {
+        bail!("CA bundle did not contain any PEM certificates");
+    }
+
+    Ok(certs)
 }
 
 /// Wraps a reader to print download progress to stderr.

@@ -7,6 +7,7 @@ mod stream;
 mod tls;
 
 pub use config::ProxyConfig;
+pub use proxy::resolve_ca_bundle_path;
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -15,7 +16,7 @@ use std::os::unix::io::RawFd;
 use std::sync::{Arc, RwLock};
 
 use lru::LruCache;
-use proxy::ProxyEngine;
+use proxy::{build_upstream_ssl_connector, ProxyEngine};
 use stack::NetworkStack;
 use tls::CertificateAuthority;
 use tokio::sync::mpsc;
@@ -126,6 +127,7 @@ pub fn start(host_fd: RawFd, config: ProxyConfig) -> anyhow::Result<ProxyHandle>
         })?;
 
     let proxy_config = config;
+    let upstream_ssl = build_upstream_ssl_connector(&proxy_config)?;
     let proxy_placeholders = placeholders.clone();
     let proxy_allowed_ips = allowed_ips.clone();
     let runtime_thread = std::thread::Builder::new()
@@ -145,6 +147,7 @@ pub fn start(host_fd: RawFd, config: ProxyConfig) -> anyhow::Result<ProxyHandle>
                     ca,
                     proxy_placeholders,
                     proxy_allowed_ips,
+                    upstream_ssl,
                 );
                 engine.run().await;
             });
