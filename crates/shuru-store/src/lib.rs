@@ -148,7 +148,8 @@ pub fn start_cas_nbd_server(
             anyhow::ensure!(
                 fb.size() <= idx.disk_size(),
                 "fallback file size ({}) exceeds index disk_size ({}); index may be corrupt",
-                fb.size(), idx.disk_size(),
+                fb.size(),
+                idx.disk_size(),
             );
         }
         (idx, fb, Some(index_path.to_string()))

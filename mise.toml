@@ -1,0 +1,6 @@
+[tools]
+just = "latest"
+
+[env]
+SHURU_CA_BUNDLE = "system"
+_.path = ["target/debug"]
